@@ -1,0 +1,18 @@
+# https://github.com/CodeMyst/filemyst/blob/main/Dockerfile
+FROM golang:1.23.2-alpine3.20
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+
+RUN apk add build-base
+RUN apk add zip
+
+RUN go mod download
+
+COPY main.go ./
+
+RUN CGO_ENABLED=1 GOOS=linux go build -o govault
+
+EXPOSE 8080
+CMD ["./govault"]

@@ -1,0 +1,98 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/log"
+	"github.com/gofiber/fiber/v3/middleware/keyauth"
+	"github.com/golang-jwt/jwt/v5"
+)
+
+type Claims struct {
+	jwt.RegisteredClaims
+	Email    string `json:"email"`
+	Username string `json:"preferred_username"`
+	Name     string `json:"name"`
+}
+
+type OIDCProvider struct {
+	IssuerUrl    string
+	ClientId     string
+	ClientSecret string
+}
+
+func main() {
+	/*app := fiber.New()
+	app.Use(cors.New())
+	app.Use(logger.New())
+	app.Get("/", func(ctx fiber.Ctx) error {
+		return ctx.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Hello, World!"})
+	})
+
+	log.Fatal(app.Listen(":3000"))*/
+
+	validator, err := NewOIDCJWTValidor(&OIDCProvider{
+		IssuerUrl:    "https://auth.munchii.me/.well-known/openid-configuration",
+		ClientId:     "govault-test-app",
+		ClientSecret: "my_secret_key",
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	app := fiber.New()
+
+	app.Get("/", func(c fiber.Ctx) error {
+		return c.SendString("Hello, World!")
+	})
+
+	profile := app.Group("profile", keyauth.New(keyauth.Config{
+		Validator: validator,
+	}))
+	profile.Get("email", func(c fiber.Ctx) error {
+		claims := c.Locals("claims").(*Claims)
+		return c.SendString(claims.Email)
+	})
+	profile.Get("username", func(c fiber.Ctx) error {
+		claims := c.Locals("claims").(*Claims)
+		return c.SendString(claims.Username)
+	})
+	profile.Get("name", func(c fiber.Ctx) error {
+		claims := c.Locals("claims").(*Claims)
+		return c.SendString(claims.Name)
+	})
+
+	log.Fatal(app.Listen(":8080"))
+}
+
+func NewOIDCJWTValidor(providerInfo *OIDCProvider) (func(fiber.Ctx, string) (bool, error), error) {
+	ctx := context.Background()
+	provider, err := oidc.NewProvider(ctx, providerInfo.IssuerUrl)
+	if err != nil {
+		return nil, err
+	}
+	verifier := provider.Verifier(&oidc.Config{
+		ClientID: providerInfo.ClientId,
+	})
+
+	return func(c fiber.Ctx, key string) (bool, error) {
+		var ctx = c.UserContext()
+		_, err := verifier.Verify(ctx, key)
+		if err != nil {
+			return false, nil
+		}
+
+		tok, _ := jwt.ParseWithClaims(key, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+
+			return key, nil
+		})
+		c.Locals("claims", tok.Claims)
+
+		return true, nil
+	}, nil
+}
